@@ -435,7 +435,7 @@ private:
     void do_read() {
         async_read_head([this](const boost::system::error_code& ec, const size_t length) {
             if (!socket_.is_open()) {
-                // LOG(INFO) << "socket already closed";
+                // std::cout << "socket already closed";
                 has_connected_ = false;
                 return;
             }
@@ -455,7 +455,7 @@ private:
                 }
 
                 if (body_len == 0 || body_len > MAX_BUF_LEN) {
-                    // LOG(INFO) << "invalid body len";
+                    // std::cout << "invalid body len";
                     close();
                     error_callback(asio::error::make_error_code(asio::error::message_size));
                     return;
@@ -472,7 +472,7 @@ private:
             // cancel_timer();
 
             if (!socket_.is_open()) {
-                // LOG(INFO) << "socket already closed";
+                // std::cout << "socket already closed";
                 call_back(req_id, asio::error::make_error_code(asio::error::connection_aborted), {});
                 return;
             }
@@ -491,7 +491,7 @@ private:
 
                 do_read();
             } else {
-                // LOG(INFO) << ec.message();
+                // std::cout << ec.message();
                 has_connected_ = false;
                 close();
                 error_callback(ec);

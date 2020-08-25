@@ -121,7 +121,7 @@ virtual void Echo(google::protobuf::RpcController* cntl_base,
         // The purpose of following logs is to help you to understand
         // how clients interact with servers more intuitively. You should 
         // remove these logs in performance-sensitive servers.
-        /*LOG(INFO) << "Received request[log_id=" << cntl->log_id() 
+        /*std::cout << "Received request[log_id=" << cntl->log_id() 
                   << "] from " << cntl->remote_side() 
                   << " to " << cntl->local_side()
                   << ": " << request->message()
@@ -187,7 +187,7 @@ int main(int argc, char* argv[]) {
 		cntl.request_attachment().append(FLAGS_attachment);
 		stub.Echo(&cntl, &request, &response, NULL);
 		if (!cntl.Failed()) {
-			/*LOG(INFO) << "Received response from " << cntl.remote_side()
+			/*std::cout << "Received response from " << cntl.remote_side()
 				<< " to " << cntl.local_side()
 				<< ": " << response.message() << " (attached="
 				<< cntl.response_attachment() << ")"
@@ -200,7 +200,7 @@ int main(int argc, char* argv[]) {
 	auto end = high_resolution_clock::now();
 	cout << "elapse time = " << duration_cast<seconds>(end - begin).count() << "s" << endl;
 	std::cout << "finish\n";
-    //LOG(INFO) << "EchoClient is going to quit";
+    //std::cout << "EchoClient is going to quit";
     return 0;
 }
 ```

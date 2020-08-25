@@ -104,7 +104,7 @@ public:
 private:
     void do_accept() {
         conn_.reset(new connection(io_service_pool_.get_io_service(), timeout_seconds_));
-        conn_->set_callback([this](std::string key, std::string token, std::weak_ptr<connection> conn) {
+        conn_->set_callback([this](std::string key, std::string token, const std::weak_ptr<connection>& conn) {
             std::unique_lock<std::mutex> lock(sub_mtx_);
             sub_map_.emplace(std::move(key) + token, conn);
             if (!token.empty()) {
@@ -112,9 +112,10 @@ private:
             }
         });
 
+        // 异步接收一个新的connection
         acceptor_.async_accept(conn_->socket(), [this](boost::system::error_code ec) {
             if (ec) {
-                // LOG(INFO) << "acceptor error: " << ec.message();
+                std::cout << "acceptor error: " << ec.message() << std::endl;
             } else {
 #ifdef CINATRA_ENABLE_SSL
                 if (!ssl_conf_.cert_file.empty()) {

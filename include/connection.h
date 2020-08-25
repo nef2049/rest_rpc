@@ -138,7 +138,7 @@ private:
         auto self(this->shared_from_this());
         async_read_head([this, self](boost::system::error_code ec, std::size_t length) {
             if (!socket_.is_open()) {
-                // LOG(INFO) << "socket already closed";
+                // std::cout << "socket already closed";
                 return;
             }
 
@@ -177,7 +177,7 @@ private:
             cancel_timer();
 
             if (!socket_.is_open()) {
-                // LOG(INFO) << "socket already closed";
+                // std::cout << "socket already closed";
                 return;
             }
 
@@ -196,7 +196,7 @@ private:
                     }
                 }
             } else {
-                // LOG(INFO) << ec.message();
+                // std::cout << ec.message();
             }
         });
     }
@@ -309,7 +309,7 @@ private:
                 return;
             }
 
-            // LOG(INFO) << "rpc connection timeout";
+            // std::cout << "rpc connection timeout";
             close(false);
         });
     }
