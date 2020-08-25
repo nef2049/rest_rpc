@@ -17,7 +17,12 @@ enum class error_code {
     BADCONNECTION,
 };
 
-enum class request_type : uint8_t { req_res, sub_pub };
+enum class request_type : uint8_t {
+    // 请求和响应
+    req_res,
+    // 连接
+    sub_pub
+};
 
 struct message_type {
     std::uint64_t req_id;

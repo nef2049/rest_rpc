@@ -401,6 +401,8 @@ void test_sub1() {
         while (true) {
             try {
                 if (client.has_connected()) {
+                    std::cout<<"prepare..."<<std::endl;
+                    std::this_thread::sleep_for(std::chrono::seconds(5));
                     int r = client.call<int>("add", 2, 3);
                     std::cout << "add result: " << r << "\n";
                 }
@@ -409,6 +411,7 @@ void test_sub1() {
             } catch (const std::exception& ex) {
                 std::cout << ex.what() << "\n";
             }
+            std::this_thread::sleep_for(std::chrono::seconds(5));
         }
     });
 
@@ -599,11 +602,11 @@ void test_ssl() {
 
 int main() {
     test_sub1();
-    test_connect();
-    test_callback();
-    test_echo();
-    test_sync_client();
-    test_async_client();
+    //    test_connect();
+    //    test_callback();
+    //    test_echo();
+    //    test_sync_client();
+    //    test_async_client();
     // test_threads();
     // test_sub();
     // test_call_with_timeout();

@@ -134,14 +134,16 @@ public:
 
 private:
     void read_head() {
+        std::cout << __func__ << std::endl;
         reset_timer();
         auto self(this->shared_from_this());
         async_read_head([this, self](boost::system::error_code ec, std::size_t length) {
             if (!socket_.is_open()) {
-                // std::cout << "socket already closed";
+                std::cout << "socket already closed" << std::endl;
                 return;
             }
 
+            std::cout << "ec: " << ec.value() << std::endl;
             if (!ec) {
                 // const uint32_t body_len = *((int*)(head_));
                 // req_id_ = *((std::uint64_t*)(head_ + sizeof(int32_t)));
@@ -149,6 +151,8 @@ private:
                 req_id_ = header->req_id;
                 const uint32_t body_len = header->body_len;
                 req_type_ = header->req_type;
+                std::cout << "req_id: " << req_id_ << ", body len: " << body_len << ", req_type: " << (uint8_t)req_type_
+                          << std::endl;
                 if (body_len > 0 && body_len < MAX_BUF_LEN) {
                     if (body_.size() < body_len) {
                         body_.resize(body_len);
@@ -157,27 +161,28 @@ private:
                     return;
                 }
 
-                if (body_len == 0) {  // nobody, just head, maybe as heartbeat.
+                if (body_len == 0) {  // empty body, read another head, maybe as heartbeat.
                     cancel_timer();
                     read_head();
                 } else {
-                    print("invalid body len");
+                    std::cout << "invalid body len" << std::endl;
                     close();
                 }
             } else {
-                print(ec);
+                std::cout << "error, msg->" << ec.message() << std::endl;
                 close();
             }
         });
     }
 
     void read_body(std::size_t size) {
+        std::cout << __func__ << std::endl;
         auto self(this->shared_from_this());
         async_read(size, [this, self](boost::system::error_code ec, std::size_t length) {
             cancel_timer();
 
             if (!socket_.is_open()) {
-                // std::cout << "socket already closed";
+                std::cout << "socket already closed" << std::endl;
                 return;
             }
 
@@ -302,14 +307,16 @@ private:
         timer_.expires_from_now(std::chrono::seconds(timeout_seconds_));
         timer_.async_wait([this, self](const boost::system::error_code& ec) {
             if (has_closed()) {
+                std::cout << "already closed" << std::endl;
                 return;
             }
 
             if (ec) {
+                std::cout << "error, code->" << ec.message() << std::endl;
                 return;
             }
 
-            // std::cout << "rpc connection timeout";
+            std::cout << "rpc connection timeout" << std::endl;
             close(false);
         });
     }
@@ -343,7 +350,7 @@ private:
 
     template <typename... Args>
     void print(Args... args) {
-#ifdef _DEBUG
+#ifndef _DEBUG
         std::initializer_list<int>{(std::cout << args << ' ', 0)...};
         std::cout << "\n";
 #endif

@@ -25,9 +25,13 @@ public:
             , check_seconds_(check_seconds) {
         do_accept();
         check_thread_ = std::make_shared<std::thread>([this] {
+            // 每隔check_seconds_时间就去检查是否有connection处于closed状态，然后从
+            // connections_中清除
             clean();
         });
         pub_sub_thread_ = std::make_shared<std::thread>([this] {
+            // 每隔10s时间就去检查是否有connection处于closed状态，然后从
+            // sub_map_中清除
             clean_sub_pub();
         });
     }
@@ -103,6 +107,7 @@ public:
 
 private:
     void do_accept() {
+        std::cout << "accepting..." << std::endl;
         conn_.reset(new connection(io_service_pool_.get_io_service(), timeout_seconds_));
         conn_->set_callback([this](std::string key, std::string token, const std::weak_ptr<connection>& conn) {
             std::unique_lock<std::mutex> lock(sub_mtx_);
@@ -114,6 +119,7 @@ private:
 
         // 异步接收一个新的connection
         acceptor_.async_accept(conn_->socket(), [this](boost::system::error_code ec) {
+            std::cout << "accept a new connection" << std::endl;
             if (ec) {
                 std::cout << "acceptor error: " << ec.message() << std::endl;
             } else {
