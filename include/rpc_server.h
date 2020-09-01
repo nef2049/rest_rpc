@@ -14,8 +14,6 @@ using boost::asio::ip::tcp;
 namespace rest_rpc {
 namespace rpc_service {
 
-using rpc_conn = std::weak_ptr<connection>;
-
 class rpc_server : private asio::noncopyable {
 public:
     rpc_server(short port, size_t size, size_t timeout_seconds = 15, size_t check_seconds = 10)
@@ -76,14 +74,30 @@ public:
         io_service_pool_.run();
     }
 
+    /**
+     * register一个普通的function
+     * @tparam model sync or async
+     * @tparam Function
+     * @param name
+     * @param f
+     */
     template <ExecMode model = ExecMode::sync, typename Function>
     void register_handler(std::string const& name, const Function& f) {
-        router::get().register_handler<model>(name, f);
+        router::instance().register_handler<model>(name, f);
     }
 
+    /**
+     * register一个类的成员function
+     * @tparam model sync or async
+     * @tparam Function
+     * @tparam Self
+     * @param name
+     * @param f
+     * @param self 类对象的地址
+     */
     template <ExecMode model = ExecMode::sync, typename Function, typename Self>
     void register_handler(std::string const& name, const Function& f, Self* self) {
-        router::get().register_handler<model>(name, f, self);
+        router::instance().register_handler<model>(name, f, self);
     }
 
     void set_conn_timeout_callback(std::function<void(int64_t)> callback) {
@@ -215,6 +229,7 @@ private:
     std::shared_ptr<std::thread> thd_;
     std::size_t timeout_seconds_;
 
+    // id: connection
     std::unordered_map<int64_t, std::shared_ptr<connection>> connections_;
     int64_t conn_id_ = 0;
     std::mutex mtx_;
@@ -224,7 +239,9 @@ private:
     std::condition_variable cv_;
 
     std::function<void(int64_t)> conn_timeout_callback_;
+    // key+token: connection
     std::unordered_multimap<std::string, std::weak_ptr<connection>> sub_map_;
+    // token
     std::set<std::string> token_list_;
     std::mutex sub_mtx_;
     std::condition_variable sub_cv_;

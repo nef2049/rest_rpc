@@ -1,3 +1,7 @@
+# 开关clang-format
+# // clang-format off
+# // clang-format on
+
 Language: Cpp
 BasedOnStyle: Google
 AccessModifierOffset: -4

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REST_RPC_USE_ASIO_H
+#define REST_RPC_USE_ASIO_H
 
 #if defined(ASIO_STANDALONE)
 // MSVC : define environment path 'ASIO_STANDALONE_INCLUDE', e.g. 'E:\bdlibs\asio-1.10.6\include'
@@ -61,4 +62,6 @@ namespace rpcfs = boost::filesystem;
 #include <boost/filesystem.hpp>
 namespace rpcfs = boost::filesystem;
 #endif
+#endif
+
 #endif

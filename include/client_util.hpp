@@ -1,4 +1,6 @@
-#pragma once
+#ifndef REST_RPC_CLIENT_UTIL_H
+#define REST_RPC_CLIENT_UTIL_H
+
 #include <tuple>
 #if __cplusplus > 201402L
 #include <string_view>
@@ -49,3 +51,5 @@ inline T as(string_view result) {
     return get_result<T>(result);
 }
 }  // namespace rest_rpc
+
+#endif

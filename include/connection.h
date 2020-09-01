@@ -40,6 +40,7 @@ public:
         if (is_ssl() && !has_shake_) {
             async_handshake();
         } else {
+            std::cout << "===connection start, read head..." << std::endl;
             read_head();
         }
     }
@@ -134,10 +135,10 @@ public:
 
 private:
     void read_head() {
-        std::cout << __func__ << std::endl;
+        std::cout << "===start read head..." << std::endl;
         reset_timer();
-        auto self(this->shared_from_this());
-        async_read_head([this, self](boost::system::error_code ec, std::size_t length) {
+        async_read_head([this](boost::system::error_code ec, std::size_t length) {
+            std::cout << "===read head finished..." << std::endl;
             if (!socket_.is_open()) {
                 std::cout << "socket already closed" << std::endl;
                 return;
@@ -151,8 +152,8 @@ private:
                 req_id_ = header->req_id;
                 const uint32_t body_len = header->body_len;
                 req_type_ = header->req_type;
-                std::cout << "req_id: " << req_id_ << ", body len: " << body_len << ", req_type: " << (uint8_t)req_type_
-                          << std::endl;
+                std::cout << "---head req_id: " << req_id_ << ", body len: " << body_len
+                          << ", req_type: " << (int32_t)req_type_ << std::endl;
                 if (body_len > 0 && body_len < MAX_BUF_LEN) {
                     if (body_.size() < body_len) {
                         body_.resize(body_len);
@@ -163,6 +164,7 @@ private:
 
                 if (body_len == 0) {  // empty body, read another head, maybe as heartbeat.
                     cancel_timer();
+                    std::cout << "===body len=0, read head" << std::endl;
                     read_head();
                 } else {
                     std::cout << "invalid body len" << std::endl;
@@ -176,9 +178,9 @@ private:
     }
 
     void read_body(std::size_t size) {
-        std::cout << __func__ << std::endl;
-        auto self(this->shared_from_this());
-        async_read(size, [this, self](boost::system::error_code ec, std::size_t length) {
+        std::cout << "===start read body..." << std::endl;
+        async_read(size, [this](boost::system::error_code ec, std::size_t length) {
+            std::cout << "===read body finished..." << std::endl;
             cancel_timer();
 
             if (!socket_.is_open()) {
@@ -187,21 +189,25 @@ private:
             }
 
             if (!ec) {
+                std::cout << "===read body finished, start another read head..." << std::endl;
                 read_head();
+
+                std::cout << "---start parsing body, req_type_: " << ((int32_t)req_type_) << std::endl;
                 if (req_type_ == request_type::req_res) {
-                    router& _router = router::get();
+                    router& _router = router::instance();
                     _router.route<connection>(body_.data(), length, this->shared_from_this());
                 } else if (req_type_ == request_type::sub_pub) {
                     try {
                         msgpack_codec codec;
                         auto p = codec.unpack<std::tuple<std::string, std::string>>(body_.data(), length);
+                        std::cout << "p0->" << std::get<0>(p) << ", p1->" << std::get<1>(p) << std::endl;
                         callback_(std::move(std::get<0>(p)), std::move(std::get<1>(p)), this->shared_from_this());
                     } catch (const std::exception& ex) {
                         print(ex);
                     }
                 }
             } else {
-                // std::cout << ec.message();
+                std::cout << ec.message() << std::endl;
             }
         });
     }
@@ -307,16 +313,16 @@ private:
         timer_.expires_from_now(std::chrono::seconds(timeout_seconds_));
         timer_.async_wait([this, self](const boost::system::error_code& ec) {
             if (has_closed()) {
-                std::cout << "already closed" << std::endl;
+                std::cout << "reset_timer, already closed" << std::endl;
                 return;
             }
 
             if (ec) {
-                std::cout << "error, code->" << ec.message() << std::endl;
+                std::cout << "reset_timer, error code->" << ec.message() << std::endl;
                 return;
             }
 
-            std::cout << "rpc connection timeout" << std::endl;
+            std::cout << "reset_timer, rpc connection timeout" << std::endl;
             close(false);
         });
     }
