@@ -56,7 +56,7 @@ void test_hello() {
             return;
         }
 
-        client.call("hello", "purecpp");
+        client.call<DEFAULT_TIMEOUT, void>("hello", "purecpp");
     } catch (const std::exception& e) {
         std::cout << e.what() << std::endl;
     }
@@ -126,7 +126,7 @@ void test_async_client() {
     fu.get().as();  // no return
 
     // sync call
-    client.call("hello", "purecpp");
+    client.call<DEFAULT_TIMEOUT, void>("hello", "purecpp");
     auto p = client.call<DEFAULT_TIMEOUT, person>("get_person");
 
     std::string str;
@@ -360,8 +360,6 @@ void test_callback() {
             },
             test1);
     }
-
-    client.run();
 }
 
 void wait_for_notification(rpc_client& client) {

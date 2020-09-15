@@ -16,7 +16,7 @@ include_directories(
         "../../third/msgpack/include"
 )
 
-add_executable(basic_server main.cpp)
+add_executable(basic_server main2.cpp)
 
 if (ENABLE_SSL)
     target_link_libraries(basic_server ${Boost_LIBRARIES} -lssl -lcrypto -lpthread)

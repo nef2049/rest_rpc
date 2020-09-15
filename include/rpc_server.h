@@ -193,6 +193,8 @@ private:
             if (subscribes_map_.empty())
                 return;
 
+            // range.first指向第一个实例
+            // range.second指向最后一个实例的下一个位置
             range = subscribes_map_.equal_range(key + token);
         }
 

@@ -80,10 +80,6 @@ public:
         stop();
     }
 
-    void run() {
-        io_service_thread_->join();
-    }
-
     bool connect(size_t timeout = 3, bool is_ssl = false) {
         if (has_connected_)
             return true;
@@ -128,6 +124,34 @@ public:
         return has_connected_;
     }
 
+    void stop() {
+        if (io_service_thread_ != nullptr) {
+            io_service_.stop();
+            io_service_thread_->join();
+            io_service_thread_ = nullptr;
+        }
+    }
+
+    void close(bool close_ssl = true) {
+        boost::system::error_code ec;
+        if (close_ssl) {
+#ifdef CINATRA_ENABLE_SSL
+            if (ssl_stream_) {
+                ssl_stream_->shutdown(ec);
+                ssl_stream_ = nullptr;
+            }
+#endif
+        }
+
+        if (!has_connected_)
+            return;
+
+        has_connected_ = false;
+        socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        socket_.close(ec);
+        clear_cache();
+    }
+
     // sync call
 #if __cplusplus > 201402L
     template <size_t TIMEOUT, typename T = void, typename... Args>
@@ -152,7 +176,7 @@ public:
 #else
 
     // void类型的future
-    template <size_t TIMEOUT = DEFAULT_TIMEOUT, typename T = void, typename... Args>
+    template <size_t TIMEOUT = DEFAULT_TIMEOUT, typename T, typename... Args>
     typename std::enable_if<std::is_void<T>::value>::type call(const std::string& rpc_name, Args&&... args) {
         std::future<request_result> future = async_call<FUTURE>(rpc_name, std::forward<Args>(args)...);
         auto status = future.wait_for(std::chrono::milliseconds(TIMEOUT));
@@ -185,7 +209,7 @@ public:
 
         uint64_t fu_id = 0;
         {
-            std::unique_lock<std::mutex> lock(cb_mtx_);
+            std::unique_lock<std::mutex> lock(callback_mutex_);
             fu_id_++;
             fu_id = fu_id_;
             future_map_.emplace(fu_id, std::move(p));
@@ -210,7 +234,7 @@ public:
 
         uint64_t cb_id = 0;
         {
-            std::unique_lock<std::mutex> lock(cb_mtx_);
+            std::unique_lock<std::mutex> lock(callback_mutex_);
             callback_id_++;
             callback_id_ |= (uint64_t(1) << 63);
             cb_id = callback_id_;
@@ -222,14 +246,6 @@ public:
         msgpack_codec codec;
         auto ret = codec.pack_args(rpc_name, std::forward<Args>(args)...);
         write(cb_id, request_type::request, std::move(ret));
-    }
-
-    void stop() {
-        if (io_service_thread_ != nullptr) {
-            io_service_.stop();
-            io_service_thread_->join();
-            io_service_thread_ = nullptr;
-        }
     }
 
     template <typename Func>
@@ -288,26 +304,6 @@ public:
     void update_addr(const std::string& host, unsigned short port) {
         host_ = host;
         port_ = port;
-    }
-
-    void close(bool close_ssl = true) {
-        boost::system::error_code ec;
-        if (close_ssl) {
-#ifdef CINATRA_ENABLE_SSL
-            if (ssl_stream_) {
-                ssl_stream_->shutdown(ec);
-                ssl_stream_ = nullptr;
-            }
-#endif
-        }
-
-        if (!has_connected_)
-            return;
-
-        has_connected_ = false;
-        socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-        socket_.close(ec);
-        clear_cache();
     }
 
     void set_error_callback(std::function<void(boost::system::error_code)> f) {
@@ -506,7 +502,7 @@ private:
         if (cb_flag) {
             std::shared_ptr<call_t> cl = nullptr;
             {
-                std::unique_lock<std::mutex> lock(cb_mtx_);
+                std::unique_lock<std::mutex> lock(callback_mutex_);
                 cl = std::move(callback_map_[req_id]);
             }
 
@@ -518,10 +514,10 @@ private:
                 cl->callback(asio::error::make_error_code(asio::error::timed_out), {});
             }
 
-            std::unique_lock<std::mutex> lock(cb_mtx_);
+            std::unique_lock<std::mutex> lock(callback_mutex_);
             callback_map_.erase(req_id);
         } else {
-            std::unique_lock<std::mutex> lock(cb_mtx_);
+            std::unique_lock<std::mutex> lock(callback_mutex_);
             auto& f = future_map_[req_id];
             if (ec) {
                 if (!f) {
@@ -577,7 +573,7 @@ private:
         }
 
         {
-            std::unique_lock<std::mutex> lock(cb_mtx_);
+            std::unique_lock<std::mutex> lock(callback_mutex_);
             callback_map_.clear();
             future_map_.clear();
         }
@@ -772,7 +768,7 @@ private:
 
     std::unordered_map<std::uint64_t, std::shared_ptr<std::promise<request_result>>> future_map_;
     std::unordered_map<std::uint64_t, std::shared_ptr<call_t>> callback_map_;
-    std::mutex cb_mtx_;
+    std::mutex callback_mutex_;
     uint64_t callback_id_ = 0;
 
     uint64_t temp_req_id_ = 0;
