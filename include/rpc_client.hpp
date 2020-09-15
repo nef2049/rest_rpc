@@ -234,13 +234,13 @@ public:
 
     template <typename Func>
     void subscribe(std::string key, Func f) {
-        auto it = sub_map_.find(key);
-        if (it != sub_map_.end()) {
+        auto it = subscribes_map_.find(key);
+        if (it != subscribes_map_.end()) {
             assert("duplicated subscribe");
             return;
         }
 
-        sub_map_.emplace(key, std::move(f));
+        subscribes_map_.emplace(key, std::move(f));
         send_subscribe(key, "");
         key_token_set_.emplace(std::move(key), "");
     }
@@ -248,13 +248,13 @@ public:
     template <typename Func>
     void subscribe(std::string key, std::string token, Func f) {
         auto composite_key = key + token;
-        auto it = sub_map_.find(composite_key);
-        if (it != sub_map_.end()) {
+        auto it = subscribes_map_.find(composite_key);
+        if (it != subscribes_map_.end()) {
             assert("duplicated subscribe");
             return;
         }
 
-        sub_map_.emplace(std::move(composite_key), std::move(f));
+        subscribes_map_.emplace(std::move(composite_key), std::move(f));
         send_subscribe(key, token);
         key_token_set_.emplace(std::move(key), std::move(token));
     }
@@ -262,14 +262,14 @@ public:
     template <typename T, size_t TIMEOUT = 3>
     void publish(std::string key, T&& t) {
         msgpack_codec codec;
-        auto buf = codec.pack(std::move(t));
+        auto buf = codec.pack(std::forward<T>(t));
         call<TIMEOUT>("publish", std::move(key), "", std::string(buf.data(), buf.size()));
     }
 
     template <typename T, size_t TIMEOUT = 3>
     void publish_by_token(std::string key, std::string token, T&& t) {
         msgpack_codec codec;
-        auto buf = codec.pack(std::move(t));
+        auto buf = codec.pack(std::forward<T>(t));
         call<TIMEOUT>("publish_by_token", std::move(key), std::move(token), std::string(buf.data(), buf.size()));
     }
 
@@ -311,7 +311,7 @@ public:
     }
 
     void set_error_callback(std::function<void(boost::system::error_code)> f) {
-        err_cb_ = std::move(f);
+        error_callback_ = std::move(f);
     }
 
     uint64_t reqest_id() {
@@ -444,8 +444,8 @@ private:
         client_message_type msg{req_id, type, {message.release(), size}};
 
         std::unique_lock<std::mutex> lock(write_mtx_);
-        outbox_.emplace_back(msg);
-        if (outbox_.size() > 1) {
+        write_queue_.emplace_back(msg);
+        if (write_queue_.size() > 1) {
             return;
         }
 
@@ -453,7 +453,7 @@ private:
     }
 
     void write() {
-        auto& msg = outbox_[0];
+        auto& msg = write_queue_[0];
         write_size_ = (uint32_t)msg.content.length();
         std::array<boost::asio::const_buffer, 4> write_buffers;
         write_buffers[0] = boost::asio::buffer(&write_size_, sizeof(int32_t));
@@ -471,14 +471,14 @@ private:
             }
 
             std::unique_lock<std::mutex> lock(write_mtx_);
-            if (outbox_.empty()) {
+            if (write_queue_.empty()) {
                 return;
             }
 
-            ::free((char*)outbox_.front().content.data());
-            outbox_.pop_front();
+            ::free((char*)write_queue_.front().content.data());
+            write_queue_.pop_front();
 
-            if (!outbox_.empty()) {
+            if (!write_queue_.empty()) {
                 // more messages to send
                 this->write();
             }
@@ -543,8 +543,8 @@ private:
             auto& key = std::get<1>(tp);
             auto& data = std::get<2>(tp);
 
-            auto it = sub_map_.find(key);
-            if (it == sub_map_.end()) {
+            auto it = subscribes_map_.find(key);
+            if (it == subscribes_map_.end()) {
                 return;
             }
 
@@ -570,9 +570,9 @@ private:
     void clear_cache() {
         {
             std::unique_lock<std::mutex> lock(write_mtx_);
-            while (!outbox_.empty()) {
-                ::free((char*)outbox_.front().content.data());
-                outbox_.pop_front();
+            while (!write_queue_.empty()) {
+                ::free((char*)write_queue_.front().content.data());
+                write_queue_.pop_front();
             }
         }
 
@@ -593,8 +593,8 @@ private:
     }
 
     void error_callback(const boost::system::error_code& ec) {
-        if (err_cb_) {
-            err_cb_(ec);
+        if (error_callback_) {
+            error_callback_(ec);
         }
 
         if (enable_reconnect_) {
@@ -603,7 +603,7 @@ private:
     }
 
     void set_default_error_cb() {
-        err_cb_ = [this](boost::system::error_code) {
+        error_callback_ = [this](boost::system::error_code) {
             async_connect();
         };
     }
@@ -737,6 +737,12 @@ private:
         std::function<void(boost::system::error_code, string_view)> cb_;
     };
 
+    struct client_message_type {
+        std::uint64_t req_id;
+        request_type req_type;
+        string_view content;
+    };
+
     boost::asio::io_service io_service_;
     asio::ip::tcp::socket socket_;
 #ifdef CINATRA_ENABLE_SSL
@@ -757,16 +763,11 @@ private:
 
     asio::steady_timer deadline_;
 
-    struct client_message_type {
-        std::uint64_t req_id;
-        request_type req_type;
-        string_view content;
-    };
-    std::deque<client_message_type> outbox_;
+    std::deque<client_message_type> write_queue_;
     uint32_t write_size_ = 0;
     std::mutex write_mtx_;
     uint64_t fu_id_ = 0;
-    std::function<void(boost::system::error_code)> err_cb_;
+    std::function<void(boost::system::error_code)> error_callback_;
     bool enable_reconnect_ = false;
 
     std::unordered_map<std::uint64_t, std::shared_ptr<std::promise<request_result>>> future_map_;
@@ -779,7 +780,7 @@ private:
     char head_[HEAD_LEN] = {};
     std::vector<char> body_;
 
-    std::unordered_map<std::string, std::function<void(string_view)>> sub_map_;
+    std::unordered_map<std::string, std::function<void(string_view)>> subscribes_map_;
     std::set<std::pair<std::string, std::string>> key_token_set_;
 };
 
