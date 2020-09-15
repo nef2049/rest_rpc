@@ -18,7 +18,7 @@ void test_add() {
         }
 
         {
-            auto result = client.call<int>("add", 1, 2);
+            auto result = client.call<DEFAULT_TIMEOUT, int>("add", 1, 2);
             std::cout << result << std::endl;
         }
 
@@ -40,7 +40,7 @@ void test_translate() {
             return;
         }
 
-        auto result = client.call<std::string>("translate", "hello");
+        auto result = client.call<DEFAULT_TIMEOUT, std::string>("translate", "hello");
         std::cout << result << std::endl;
     } catch (const std::exception& e) {
         std::cout << e.what() << std::endl;
@@ -79,7 +79,7 @@ void test_get_person_name() {
             return;
         }
 
-        auto result = client.call<std::string>("get_person_name", person{1, "tom", 20});
+        auto result = client.call<DEFAULT_TIMEOUT, std::string>("get_person_name", person{1, "tom", 20});
         std::cout << result << std::endl;
     } catch (const std::exception& e) {
         std::cout << e.what() << std::endl;
@@ -95,7 +95,7 @@ void test_get_person() {
             return;
         }
 
-        auto result = client.call<person>("get_person");
+        auto result = client.call<DEFAULT_TIMEOUT, person>("get_person");
         std::cout << result.name << std::endl;
     } catch (const std::exception& e) {
         std::cout << e.what() << std::endl;
@@ -127,7 +127,7 @@ void test_async_client() {
 
     // sync call
     client.call("hello", "purecpp");
-    auto p = client.call<person>("get_person");
+    auto p = client.call<DEFAULT_TIMEOUT, person>("get_person");
 
     std::string str;
     std::cin >> str;
@@ -198,12 +198,12 @@ void test_echo() {
     }
 
     {
-        auto result = client.call<std::string>("echo", "test");
+        auto result = client.call<DEFAULT_TIMEOUT, std::string>("echo", "test");
         std::cout << result << std::endl;
     }
 
     {
-        auto result = client.call<std::string>("async_echo", "test");
+        auto result = client.call<DEFAULT_TIMEOUT, std::string>("async_echo", "test");
         std::cout << result << std::endl;
     }
 }
@@ -265,7 +265,7 @@ void test_performance2() {
 
     try {
         for (size_t i = 0; i < 100000000; i++) {
-            client.call<std::string>("get_name", p);
+            client.call<DEFAULT_TIMEOUT, std::string>("get_name", p);
         }
         std::cout << "finish\n";
     } catch (const std::exception& ex) {
@@ -337,7 +337,7 @@ void test_callback() {
     for (size_t i = 0; i < 100; i++) {
         std::string test = "test" + std::to_string(i + 1);
         // set timeout 100ms
-        client.async_call<100>(
+        client.async_call<CALLBACK, 100>(
             "async_echo",
             [](const boost::system::error_code& ec, string_view data) {
                 if (ec) {
@@ -352,7 +352,7 @@ void test_callback() {
 
         std::string test1 = "test" + std::to_string(i + 2);
         // zero means no timeout check, no param means using default timeout(5s)
-        client.async_call<0>(
+        client.async_call<CALLBACK, 0>(
             "echo",
             [](const boost::system::error_code& ec, string_view data) {
                 auto str = as<std::string>(data);
@@ -365,7 +365,7 @@ void test_callback() {
 }
 
 void wait_for_notification(rpc_client& client) {
-    client.async_call<0>("sub", [&client](const boost::system::error_code& ec, string_view data) {
+    client.async_call<CALLBACK, 0>("sub", [&client](const boost::system::error_code& ec, string_view data) {
         auto str = as<std::string>(data);
         std::cout << str << '\n';
 
@@ -382,37 +382,36 @@ void test_sub1() {
         return;
     }
 
-    client.subscribe("key", [](string_view data) {
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    client.subscribe("key1", [](string_view data) {
         std::cout << data << "\n";
     });
-
-    client.subscribe("key", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](string_view data) {
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    client.subscribe("key2", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](string_view data) {
         msgpack_codec codec;
         person p = codec.unpack<person>(data.data(), data.size());
         std::cout << p.name << "\n";
     });
-
-    client.subscribe("key1", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](string_view data) {
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    client.subscribe("key3", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](string_view data) {
         std::cout << data << "\n";
     });
 
     bool stop = false;
     std::thread thd1([&client, &stop] {
-        while (true) {
-            try {
-                if (client.has_connected()) {
-                    std::cout<<"prepare..."<<std::endl;
-                    std::this_thread::sleep_for(std::chrono::seconds(5));
-                    int r = client.call<int>("add", 2, 3);
-                    std::cout << "add result: " << r << "\n";
-                }
-
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            } catch (const std::exception& ex) {
-                std::cout << ex.what() << "\n";
+        try {
+            if (client.has_connected()) {
+                std::cout << "prepare..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                int r = client.call<DEFAULT_TIMEOUT, int>("add", 9332, 76810);
+                std::cout << "add result: " << r << "\n";
             }
-            std::this_thread::sleep_for(std::chrono::seconds(5));
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        } catch (const std::exception& ex) {
+            std::cout << ex.what() << "\n";
         }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     });
 
     /*rpc_client client1;
@@ -440,6 +439,8 @@ void test_sub1() {
 
     std::string str;
     std::cin >> str;
+
+    thd1.join();
 }
 
 void test_multiple_thread() {
@@ -458,7 +459,7 @@ void test_multiple_thread() {
             v.emplace_back(std::make_shared<std::thread>([client] {
                 person p{1, "tom", 20};
                 for (size_t i = 0; i < 1000000; i++) {
-                    client->async_call<0>(
+                    client->async_call<CALLBACK, 0>(
                         "get_name",
                         [](const boost::system::error_code& ec, string_view data) {
                             if (ec) {
@@ -512,7 +513,7 @@ void test_threads() {
 
     std::thread thd2([&client] {
         for (size_t i = 1000000; i < 2 * 1000000; i++) {
-            client.async_call(
+            client.async_call<CALLBACK>(
                 "get_int",
                 [i](boost::system::error_code ec, string_view data) {
                     if (ec) {
@@ -568,13 +569,13 @@ void test_ssl() {
 
     for (size_t i = 0; i < 100; i++) {
         try {
-            auto result = client.call<std::string>("echo", "purecpp");
+            auto result = client.call<DEFAULT_TIMEOUT, std::string>("echo", "purecpp");
             std::cout << result << " sync\n";
         } catch (const std::exception& e) {
             std::cout << e.what() << " sync\n";
         }
 
-        auto future = client.async_call<CallModel::future>("echo", "purecpp");
+        auto future = client.async_call<FUTURE>("echo", "purecpp");
         auto status = future.wait_for(std::chrono::milliseconds(5000));
         if (status == std::future_status::timeout) {
             std::cout << "timeout future\n";
@@ -583,7 +584,7 @@ void test_ssl() {
             std::cout << result1.as<std::string>() << " future\n";
         }
 
-        client.async_call(
+        client.async_call<CALLBACK>(
             "echo",
             [](boost::system::error_code ec, string_view data) {
                 if (ec) {

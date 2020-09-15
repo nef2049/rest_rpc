@@ -1,8 +1,11 @@
-#pragma once
+#ifndef REST_RPC_RPC_CLIENT_H
+#define REST_RPC_RPC_CLIENT_H
+
 #include <deque>
 #include <future>
 #include <iostream>
 #include <string>
+#include <utility>
 
 #include "client_util.hpp"
 #include "const_vars.h"
@@ -12,51 +15,63 @@
 using namespace rest_rpc::rpc_service;
 
 namespace rest_rpc {
-class req_result {
+
+enum CallModel { future, callback };
+const CallModel FUTURE = CallModel::future;
+const CallModel CALLBACK = CallModel::callback;
+const size_t DEFAULT_TIMEOUT = 5000;  // ms
+
+class request_result {
 public:
-    req_result() = default;
-    req_result(string_view data) : data_(data.data(), data.length()) {
+    request_result() = default;
+
+    explicit request_result(string_view data) : data_(data.data(), data.length()) {
     }
+
+    template <class T = void>
+    T as();
+
     bool success() const {
         return !has_error(data_);
-    }
-
-    template <typename T>
-    T as() {
-        if (has_error(data_)) {
-            throw std::logic_error(get_error_msg(data_));
-        }
-
-        return get_result<T>(data_);
-    }
-
-    void as() {
-        if (has_error(data_)) {
-            throw std::logic_error(get_error_msg(data_));
-        }
     }
 
 private:
     std::string data_;
 };
 
-enum class CallModel { future, callback };
-const constexpr auto FUTURE = CallModel::future;
+template <class T>
+T request_result::as() {
+    if (has_error(data_)) {
+        throw std::logic_error(get_error_msg(data_));
+    }
 
-const constexpr size_t DEFAULT_TIMEOUT = 5000;  // milliseconds
+    return get_result<T>(data_);
+}
+
+template <>
+void request_result::as<void>() {
+    if (has_error(data_)) {
+        throw std::logic_error(get_error_msg(data_));
+    }
+}
 
 class rpc_client : private asio::noncopyable {
 public:
-    rpc_client() : socket_(ios_), work_(ios_), deadline_(ios_), body_(INIT_BUF_SIZE) {
-        thd_ = std::make_shared<std::thread>([this] {
-            ios_.run();
+    rpc_client() : socket_(io_service_), work_(io_service_), deadline_(io_service_), body_(INIT_BUF_SIZE) {
+        io_service_thread_ = std::make_shared<std::thread>([this] {
+            io_service_.run();
         });
     }
 
-    rpc_client(const std::string& host, unsigned short port)
-            : socket_(ios_), work_(ios_), deadline_(ios_), host_(host), port_(port), body_(INIT_BUF_SIZE) {
-        thd_ = std::make_shared<std::thread>([this] {
-            ios_.run();
+    rpc_client(std::string host, unsigned short port)
+            : socket_(io_service_)
+            , work_(io_service_)
+            , deadline_(io_service_)
+            , host_(std::move(host))
+            , port_(port)
+            , body_(INIT_BUF_SIZE) {
+        io_service_thread_ = std::make_shared<std::thread>([this] {
+            io_service_.run();
         });
     }
 
@@ -66,15 +81,7 @@ public:
     }
 
     void run() {
-        thd_->join();
-    }
-
-    void set_connect_timeout(size_t milliseconds) {
-        connect_timeout_ = milliseconds;
-    }
-
-    void set_reconnect_count(int reconnect_count) {
-        reconnect_cnt_ = reconnect_count;
+        io_service_thread_->join();
     }
 
     bool connect(size_t timeout = 3, bool is_ssl = false) {
@@ -114,11 +121,156 @@ public:
 
         has_wait_ = true;
         std::unique_lock<std::mutex> lock(conn_mtx_);
-        bool result = conn_cond_.wait_for(lock, std::chrono::seconds(timeout), [this] {
+        conn_cond_.wait_for(lock, std::chrono::seconds(timeout), [this] {
             return has_connected_.load();
         });
         has_wait_ = false;
         return has_connected_;
+    }
+
+    // sync call
+#if __cplusplus > 201402L
+    template <size_t TIMEOUT, typename T = void, typename... Args>
+    auto call(const std::string& rpc_name, Args&&... args) {
+        std::future<request_result> future = async_call<FUTURE>(rpc_name, std::forward<Args>(args)...);
+        auto status = future.wait_for(std::chrono::milliseconds(TIMEOUT));
+        if (status == std::future_status::timeout || status == std::future_status::deferred) {
+            throw std::out_of_range("timeout or deferred");
+        }
+
+        if constexpr (std::is_void_v<T>) {
+            future.get().as();
+        } else {
+            return future.get().as<T>();
+        }
+    }
+
+    template <typename T = void, typename... Args>
+    auto call(const std::string& rpc_name, Args&&... args) {
+        return call<DEFAULT_TIMEOUT, T>(rpc_name, std::forward<Args>(args)...);
+    }
+#else
+
+    // void类型的future
+    template <size_t TIMEOUT = DEFAULT_TIMEOUT, typename T = void, typename... Args>
+    typename std::enable_if<std::is_void<T>::value>::type call(const std::string& rpc_name, Args&&... args) {
+        std::future<request_result> future = async_call<FUTURE>(rpc_name, std::forward<Args>(args)...);
+        auto status = future.wait_for(std::chrono::milliseconds(TIMEOUT));
+        if (status == std::future_status::timeout || status == std::future_status::deferred) {
+            throw std::out_of_range("timeout or deferred");
+        }
+
+        future.get().as();
+    }
+
+    // 非void类型的future
+    template <size_t TIMEOUT = DEFAULT_TIMEOUT, typename T, typename... Args>
+    typename std::enable_if<!std::is_void<T>::value, T>::type call(const std::string& rpc_name, Args&&... args) {
+        std::future<request_result> future = async_call<FUTURE>(rpc_name, std::forward<Args>(args)...);
+        auto status = future.wait_for(std::chrono::milliseconds(TIMEOUT));
+        if (status == std::future_status::timeout || status == std::future_status::deferred) {
+            throw std::out_of_range("timeout or deferred");
+        }
+
+        return future.get().as<T>();
+    }
+#endif
+
+    template <CallModel model, size_t TIMEOUT = DEFAULT_TIMEOUT, typename... Args>
+    typename std::enable_if<model == FUTURE, std::future<request_result>>::type async_call(
+        const std::string& rpc_name,
+        Args&&... args) {
+        auto p = std::make_shared<std::promise<request_result>>();
+        std::future<request_result> future = p->get_future();
+
+        uint64_t fu_id = 0;
+        {
+            std::unique_lock<std::mutex> lock(cb_mtx_);
+            fu_id_++;
+            fu_id = fu_id_;
+            future_map_.emplace(fu_id, std::move(p));
+        }
+
+        msgpack_codec codec;
+        auto ret = codec.pack_args(rpc_name, std::forward<Args>(args)...);
+        write(fu_id, request_type::request, std::move(ret));
+        return future;
+    }
+
+    template <CallModel model, size_t TIMEOUT = DEFAULT_TIMEOUT, typename... Args>
+    typename std::enable_if<model == CALLBACK>::type async_call(
+        const std::string& rpc_name,
+        std::function<void(boost::system::error_code, string_view)> cb,
+        Args&&... args) {
+        if (!has_connected_) {
+            if (cb)
+                cb(boost::asio::error::make_error_code(boost::asio::error::not_connected), "not connected");
+            return;
+        }
+
+        uint64_t cb_id = 0;
+        {
+            std::unique_lock<std::mutex> lock(cb_mtx_);
+            callback_id_++;
+            callback_id_ |= (uint64_t(1) << 63);
+            cb_id = callback_id_;
+            auto call = std::make_shared<call_t>(io_service_, std::move(cb), TIMEOUT);
+            call->start_timer();
+            callback_map_.emplace(cb_id, call);
+        }
+
+        msgpack_codec codec;
+        auto ret = codec.pack_args(rpc_name, std::forward<Args>(args)...);
+        write(cb_id, request_type::request, std::move(ret));
+    }
+
+    void stop() {
+        if (io_service_thread_ != nullptr) {
+            io_service_.stop();
+            io_service_thread_->join();
+            io_service_thread_ = nullptr;
+        }
+    }
+
+    template <typename Func>
+    void subscribe(std::string key, Func f) {
+        auto it = sub_map_.find(key);
+        if (it != sub_map_.end()) {
+            assert("duplicated subscribe");
+            return;
+        }
+
+        sub_map_.emplace(key, std::move(f));
+        send_subscribe(key, "");
+        key_token_set_.emplace(std::move(key), "");
+    }
+
+    template <typename Func>
+    void subscribe(std::string key, std::string token, Func f) {
+        auto composite_key = key + token;
+        auto it = sub_map_.find(composite_key);
+        if (it != sub_map_.end()) {
+            assert("duplicated subscribe");
+            return;
+        }
+
+        sub_map_.emplace(std::move(composite_key), std::move(f));
+        send_subscribe(key, token);
+        key_token_set_.emplace(std::move(key), std::move(token));
+    }
+
+    template <typename T, size_t TIMEOUT = 3>
+    void publish(std::string key, T&& t) {
+        msgpack_codec codec;
+        auto buf = codec.pack(std::move(t));
+        call<TIMEOUT>("publish", std::move(key), "", std::string(buf.data(), buf.size()));
+    }
+
+    template <typename T, size_t TIMEOUT = 3>
+    void publish_by_token(std::string key, std::string token, T&& t) {
+        msgpack_codec codec;
+        auto buf = codec.pack(std::move(t));
+        call<TIMEOUT>("publish_by_token", std::move(key), std::move(token), std::string(buf.data(), buf.size()));
     }
 
     void enable_auto_reconnect(bool enable = true) {
@@ -170,154 +322,12 @@ public:
         return has_connected_;
     }
 
-    // sync call
-#if __cplusplus > 201402L
-    template <size_t TIMEOUT, typename T = void, typename... Args>
-    auto call(const std::string& rpc_name, Args&&... args) {
-        std::future<req_result> future = async_call<FUTURE>(rpc_name, std::forward<Args>(args)...);
-        auto status = future.wait_for(std::chrono::milliseconds(TIMEOUT));
-        if (status == std::future_status::timeout || status == std::future_status::deferred) {
-            throw std::out_of_range("timeout or deferred");
-        }
-
-        if constexpr (std::is_void_v<T>) {
-            future.get().as();
-        } else {
-            return future.get().as<T>();
-        }
+    void set_connect_timeout(size_t milliseconds) {
+        connect_timeout_ = milliseconds;
     }
 
-    template <typename T = void, typename... Args>
-    auto call(const std::string& rpc_name, Args&&... args) {
-        return call<DEFAULT_TIMEOUT, T>(rpc_name, std::forward<Args>(args)...);
-    }
-#else
-    template <size_t TIMEOUT, typename T = void, typename... Args>
-    typename std::enable_if<std::is_void<T>::value>::type call(const std::string& rpc_name, Args&&... args) {
-        std::future<req_result> future = async_call<FUTURE>(rpc_name, std::forward<Args>(args)...);
-        auto status = future.wait_for(std::chrono::milliseconds(TIMEOUT));
-        if (status == std::future_status::timeout || status == std::future_status::deferred) {
-            throw std::out_of_range("timeout or deferred");
-        }
-
-        future.get().as();
-    }
-
-    template <typename T = void, typename... Args>
-    typename std::enable_if<std::is_void<T>::value>::type call(const std::string& rpc_name, Args&&... args) {
-        call<DEFAULT_TIMEOUT, T>(rpc_name, std::forward<Args>(args)...);
-    }
-
-    template <size_t TIMEOUT, typename T, typename... Args>
-    typename std::enable_if<!std::is_void<T>::value, T>::type call(const std::string& rpc_name, Args&&... args) {
-        std::future<req_result> future = async_call<FUTURE>(rpc_name, std::forward<Args>(args)...);
-        auto status = future.wait_for(std::chrono::milliseconds(TIMEOUT));
-        if (status == std::future_status::timeout || status == std::future_status::deferred) {
-            throw std::out_of_range("timeout or deferred");
-        }
-
-        return future.get().as<T>();
-    }
-
-    template <typename T, typename... Args>
-    typename std::enable_if<!std::is_void<T>::value, T>::type call(const std::string& rpc_name, Args&&... args) {
-        return call<DEFAULT_TIMEOUT, T>(rpc_name, std::forward<Args>(args)...);
-    }
-#endif
-
-    template <CallModel model, typename... Args>
-    std::future<req_result> async_call(const std::string& rpc_name, Args&&... args) {
-        auto p = std::make_shared<std::promise<req_result>>();
-        std::future<req_result> future = p->get_future();
-
-        uint64_t fu_id = 0;
-        {
-            std::unique_lock<std::mutex> lock(cb_mtx_);
-            fu_id_++;
-            fu_id = fu_id_;
-            future_map_.emplace(fu_id, std::move(p));
-        }
-
-        msgpack_codec codec;
-        auto ret = codec.pack_args(rpc_name, std::forward<Args>(args)...);
-        write(fu_id, request_type::req_res, std::move(ret));
-        return future;
-    }
-
-    template <size_t TIMEOUT = DEFAULT_TIMEOUT, typename... Args>
-    void async_call(
-        const std::string& rpc_name,
-        std::function<void(boost::system::error_code, string_view)> cb,
-        Args&&... args) {
-        if (!has_connected_) {
-            if (cb)
-                cb(boost::asio::error::make_error_code(boost::asio::error::not_connected), "not connected");
-            return;
-        }
-
-        uint64_t cb_id = 0;
-        {
-            std::unique_lock<std::mutex> lock(cb_mtx_);
-            callback_id_++;
-            callback_id_ |= (uint64_t(1) << 63);
-            cb_id = callback_id_;
-            auto call = std::make_shared<call_t>(ios_, std::move(cb), TIMEOUT);
-            call->start_timer();
-            callback_map_.emplace(cb_id, call);
-        }
-
-        msgpack_codec codec;
-        auto ret = codec.pack_args(rpc_name, std::forward<Args>(args)...);
-        write(cb_id, request_type::req_res, std::move(ret));
-    }
-
-    void stop() {
-        if (thd_ != nullptr) {
-            ios_.stop();
-            thd_->join();
-            thd_ = nullptr;
-        }
-    }
-
-    template <typename Func>
-    void subscribe(std::string key, Func f) {
-        auto it = sub_map_.find(key);
-        if (it != sub_map_.end()) {
-            assert("duplicated subscribe");
-            return;
-        }
-
-        sub_map_.emplace(key, std::move(f));
-        send_subscribe(key, "");
-        key_token_set_.emplace(std::move(key), "");
-    }
-
-    template <typename Func>
-    void subscribe(std::string key, std::string token, Func f) {
-        auto composite_key = key + token;
-        auto it = sub_map_.find(composite_key);
-        if (it != sub_map_.end()) {
-            assert("duplicated subscribe");
-            return;
-        }
-
-        sub_map_.emplace(std::move(composite_key), std::move(f));
-        send_subscribe(key, token);
-        key_token_set_.emplace(std::move(key), std::move(token));
-    }
-
-    template <typename T, size_t TIMEOUT = 3>
-    void publish(std::string key, T&& t) {
-        msgpack_codec codec;
-        auto buf = codec.pack(std::move(t));
-        call<TIMEOUT>("publish", std::move(key), "", std::string(buf.data(), buf.size()));
-    }
-
-    template <typename T, size_t TIMEOUT = 3>
-    void publish_by_token(std::string key, std::string token, T&& t) {
-        msgpack_codec codec;
-        auto buf = codec.pack(std::move(t));
-        call<TIMEOUT>("publish_by_token", std::move(key), std::move(token), std::string(buf.data(), buf.size()));
+    void set_reconnect_count(int reconnect_count) {
+        reconnect_cnt_ = reconnect_count;
     }
 
 #ifdef CINATRA_ENABLE_SSL
@@ -336,7 +346,7 @@ private:
             }
 
             if (ec) {
-                // std::cout << ec.message() << std::endl;
+                std::cout << "connect failed, msg: " << ec.message() << std::endl;
 
                 has_connected_ = false;
 
@@ -350,14 +360,14 @@ private:
 
                 async_reconnect();
             } else {
-                // std::cout<<"connected ok"<<std::endl;
+                std::cout << "connected success" << std::endl;
                 if (is_ssl()) {
                     handshake();
                     return;
                 }
 
                 has_connected_ = true;
-                do_read();
+                read_head();
                 resend_subscribe();
                 if (has_wait_)
                     conn_cond_.notify_one();
@@ -371,16 +381,60 @@ private:
         std::this_thread::sleep_for(std::chrono::milliseconds(connect_timeout_));
     }
 
-    void reset_deadline_timer(size_t timeout) {
-        deadline_.expires_from_now(std::chrono::seconds(timeout));
-        deadline_.async_wait([this, timeout](const boost::system::error_code& ec) {
-            if (!ec) {
-                if (has_connected_) {
-                    write(0, request_type::req_res, buffer_type(0));
-                }
+    void read_head() {
+        async_read_head([this](const boost::system::error_code& ec, const size_t length) {
+            if (!socket_.is_open()) {
+                has_connected_ = false;
+                return;
             }
 
-            reset_deadline_timer(timeout);
+            if (!ec) {
+                auto* header = (rpc_header*)(head_);
+                const uint32_t body_len = header->body_len;
+                if (body_len > 0 && body_len < MAX_BUF_LEN) {
+                    if (body_.size() < body_len) {
+                        body_.resize(body_len);
+                    }
+                    read_body(header->req_id, header->req_type, body_len);
+                    return;
+                }
+
+                if (body_len == 0 || body_len > MAX_BUF_LEN) {
+                    close();
+                    error_callback(asio::error::make_error_code(asio::error::message_size));
+                    return;
+                }
+            } else {
+                close(false);
+                error_callback(ec);
+            }
+        });
+    }
+
+    void read_body(std::uint64_t req_id, request_type req_type, size_t body_len) {
+        async_read(body_len, [this, req_id, req_type, body_len](boost::system::error_code ec, std::size_t length) {
+            if (!socket_.is_open()) {
+                callback_request(req_id, asio::error::make_error_code(asio::error::connection_aborted), {});
+                return;
+            }
+
+            if (!ec) {
+                if (req_type == request_type::request) {
+                    callback_request(req_id, ec, {body_.data(), body_len});
+                } else if (req_type == request_type::subscribe) {
+                    callback_subscribe(ec, {body_.data(), body_len});
+                } else {
+                    close();
+                    error_callback(asio::error::make_error_code(asio::error::invalid_argument));
+                    return;
+                }
+
+                read_head();
+            } else {
+                has_connected_ = false;
+                close();
+                error_callback(ec);
+            }
         });
     }
 
@@ -390,9 +444,8 @@ private:
         client_message_type msg{req_id, type, {message.release(), size}};
 
         std::unique_lock<std::mutex> lock(write_mtx_);
-        outbox_.emplace_back(std::move(msg));
+        outbox_.emplace_back(msg);
         if (outbox_.size() > 1) {
-            // outstanding async_write
             return;
         }
 
@@ -432,77 +485,10 @@ private:
         });
     }
 
-    void do_read() {
-        async_read_head([this](const boost::system::error_code& ec, const size_t length) {
-            if (!socket_.is_open()) {
-                // std::cout << "socket already closed";
-                has_connected_ = false;
-                return;
-            }
-
-            if (!ec) {
-                // const uint32_t body_len = *((uint32_t*)(head_));
-                // auto req_id = *((std::uint64_t*)(head_ + sizeof(int32_t)));
-                // auto req_type = *(request_type*)(head_ + sizeof(int32_t) + sizeof(int64_t));
-                rpc_header* header = (rpc_header*)(head_);
-                const uint32_t body_len = header->body_len;
-                if (body_len > 0 && body_len < MAX_BUF_LEN) {
-                    if (body_.size() < body_len) {
-                        body_.resize(body_len);
-                    }
-                    read_body(header->req_id, header->req_type, body_len);
-                    return;
-                }
-
-                if (body_len == 0 || body_len > MAX_BUF_LEN) {
-                    // std::cout << "invalid body len";
-                    close();
-                    error_callback(asio::error::make_error_code(asio::error::message_size));
-                    return;
-                }
-            } else {
-                close(false);
-                error_callback(ec);
-            }
-        });
-    }
-
-    void read_body(std::uint64_t req_id, request_type req_type, size_t body_len) {
-        async_read(body_len, [this, req_id, req_type, body_len](boost::system::error_code ec, std::size_t length) {
-            // cancel_timer();
-
-            if (!socket_.is_open()) {
-                // std::cout << "socket already closed";
-                call_back(req_id, asio::error::make_error_code(asio::error::connection_aborted), {});
-                return;
-            }
-
-            if (!ec) {
-                // entier body
-                if (req_type == request_type::req_res) {
-                    call_back(req_id, ec, {body_.data(), body_len});
-                } else if (req_type == request_type::sub_pub) {
-                    callback_sub(ec, {body_.data(), body_len});
-                } else {
-                    close();
-                    error_callback(asio::error::make_error_code(asio::error::invalid_argument));
-                    return;
-                }
-
-                do_read();
-            } else {
-                // std::cout << ec.message();
-                has_connected_ = false;
-                close();
-                error_callback(ec);
-            }
-        });
-    }
-
     void send_subscribe(const std::string& key, const std::string& token) {
         msgpack_codec codec;
         auto ret = codec.pack_args(key, token);
-        write(0, request_type::sub_pub, std::move(ret));
+        write(0, request_type::subscribe, std::move(ret));
     }
 
     void resend_subscribe() {
@@ -514,7 +500,7 @@ private:
         }
     }
 
-    void call_back(uint64_t req_id, const boost::system::error_code& ec, string_view data) {
+    void callback_request(uint64_t req_id, const boost::system::error_code& ec, string_view data) {
         temp_req_id_ = req_id;
         auto cb_flag = req_id >> 63;
         if (cb_flag) {
@@ -538,20 +524,18 @@ private:
             std::unique_lock<std::mutex> lock(cb_mtx_);
             auto& f = future_map_[req_id];
             if (ec) {
-                // LOG<<ec.message();
                 if (!f) {
-                    // std::cout << "invalid req_id" << std::endl;
                     return;
                 }
             }
 
             assert(f);
-            f->set_value(req_result{data});
+            f->set_value(request_result{data});
             future_map_.erase(req_id);
         }
     }
 
-    void callback_sub(const boost::system::error_code& ec, string_view result) {
+    void callback_subscribe(const boost::system::error_code& ec, string_view result) {
         rpc_service::msgpack_codec codec;
         try {
             auto tp = codec.unpack<std::tuple<int, std::string, std::string>>(result.data(), result.size());
@@ -568,6 +552,19 @@ private:
         } catch (const std::exception& /*ex*/) {
             error_callback(asio::error::make_error_code(asio::error::invalid_argument));
         }
+    }
+
+    void reset_deadline_timer(size_t timeout) {
+        deadline_.expires_from_now(std::chrono::seconds(timeout));
+        deadline_.async_wait([this, timeout](const boost::system::error_code& ec) {
+            if (!ec) {
+                if (has_connected_) {
+                    write(0, request_type::request, buffer_type(0));
+                }
+            }
+
+            reset_deadline_timer(timeout);
+        });
     }
 
     void clear_cache() {
@@ -587,61 +584,13 @@ private:
     }
 
     void reset_socket() {
-        boost::system::error_code igored_ec;
-        socket_.close(igored_ec);
-        socket_ = decltype(socket_)(ios_);
+        boost::system::error_code ignored_ec;
+        socket_.close(ignored_ec);
+        socket_ = decltype(socket_)(io_service_);
         if (!socket_.is_open()) {
             socket_.open(boost::asio::ip::tcp::v4());
         }
     }
-
-    class call_t
-            : asio::noncopyable
-            , public std::enable_shared_from_this<call_t> {
-    public:
-        call_t(asio::io_service& ios, std::function<void(boost::system::error_code, string_view)> cb, size_t timeout)
-                : timer_(ios), cb_(std::move(cb)), timeout_(timeout) {
-        }
-
-        void start_timer() {
-            if (timeout_ == 0) {
-                return;
-            }
-
-            timer_.expires_from_now(std::chrono::milliseconds(timeout_));
-            auto self = this->shared_from_this();
-            timer_.async_wait([this, self](boost::system::error_code ec) {
-                if (ec) {
-                    return;
-                }
-
-                has_timeout_ = true;
-            });
-        }
-
-        void callback(boost::system::error_code ec, string_view data) {
-            cb_(ec, data);
-        }
-
-        bool has_timeout() const {
-            return has_timeout_;
-        }
-
-        void cancel() {
-            if (timeout_ == 0) {
-                return;
-            }
-
-            boost::system::error_code ec;
-            timer_.cancel(ec);
-        }
-
-    private:
-        boost::asio::steady_timer timer_;
-        std::function<void(boost::system::error_code, string_view)> cb_;
-        size_t timeout_;
-        bool has_timeout_ = false;
-    };
 
     void error_callback(const boost::system::error_code& ec) {
         if (err_cb_) {
@@ -737,14 +686,65 @@ private:
         }
     }
 
-    boost::asio::io_service ios_;
+    class call_t : public std::enable_shared_from_this<call_t> {
+    public:
+        call_t(asio::io_service& ios, std::function<void(boost::system::error_code, string_view)> cb, size_t timeout)
+                : timeout_timer_(ios), cb_(std::move(cb)), timeout_ms_(timeout) {
+        }
+
+        call_t(const call_t&) = delete;
+
+        call_t operator=(const call_t&) = delete;
+
+        void start_timer() {
+            if (timeout_ms_ == 0) {
+                return;
+            }
+
+            timeout_timer_.expires_from_now(std::chrono::milliseconds(timeout_ms_));
+            auto self = this->shared_from_this();
+            timeout_timer_.async_wait([this, self](boost::system::error_code ec) {
+                if (ec) {
+                    return;
+                }
+
+                has_timeout_ = true;
+            });
+        }
+
+        void callback(boost::system::error_code ec, string_view data) {
+            cb_(ec, data);
+        }
+
+        bool has_timeout() const {
+            return has_timeout_;
+        }
+
+        void cancel() {
+            if (timeout_ms_ == 0) {
+                return;
+            }
+
+            boost::system::error_code ec;
+            timeout_timer_.cancel(ec);
+        }
+
+    private:
+        boost::asio::steady_timer timeout_timer_;
+        size_t timeout_ms_;
+        bool has_timeout_ = false;
+
+        std::function<void(boost::system::error_code, string_view)> cb_;
+    };
+
+    boost::asio::io_service io_service_;
     asio::ip::tcp::socket socket_;
 #ifdef CINATRA_ENABLE_SSL
     std::unique_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket&>> ssl_stream_;
     std::function<void(boost::asio::ssl::context&)> ssl_context_callback_;
 #endif
     boost::asio::io_service::work work_;
-    std::shared_ptr<std::thread> thd_ = nullptr;
+    std::shared_ptr<std::thread> io_service_thread_ = nullptr;
 
     std::string host_;
     unsigned short port_ = 0;
@@ -769,7 +769,7 @@ private:
     std::function<void(boost::system::error_code)> err_cb_;
     bool enable_reconnect_ = false;
 
-    std::unordered_map<std::uint64_t, std::shared_ptr<std::promise<req_result>>> future_map_;
+    std::unordered_map<std::uint64_t, std::shared_ptr<std::promise<request_result>>> future_map_;
     std::unordered_map<std::uint64_t, std::shared_ptr<call_t>> callback_map_;
     std::mutex cb_mtx_;
     uint64_t callback_id_ = 0;
@@ -782,4 +782,7 @@ private:
     std::unordered_map<std::string, std::function<void(string_view)>> sub_map_;
     std::set<std::pair<std::string, std::string>> key_token_set_;
 };
+
 }  // namespace rest_rpc
+
+#endif

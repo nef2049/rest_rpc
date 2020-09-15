@@ -16,14 +16,14 @@ enum class error_code {
     FAIL,
     TIMEOUT,
     CANCEL,
-    BADCONNECTION,
+    BAD_CONNECTION,
 };
 
 enum class request_type : uint8_t {
     // 请求和响应
-    req_res,
+    request,
     // 连接
-    sub_pub
+    subscribe
 };
 
 struct message_type {

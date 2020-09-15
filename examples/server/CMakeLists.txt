@@ -10,7 +10,7 @@ if (ENABLE_SSL)
     message(STATUS "Use SSL")
 endif ()
 
-find_package(Boost COMPONENTS system filesystem REQUIRED)
+find_package(Boost COMPONENTS system filesystem)
 include_directories(
         "../../include"
         "../../third/msgpack/include"
