@@ -4,9 +4,9 @@
 #include <functional>
 
 #include "codec.h"
+#include "const_vars.h"
 #include "meta_util.hpp"
 #include "use_asio.hpp"
-#include "const_vars.h"
 
 namespace rest_rpc {
 
@@ -21,8 +21,15 @@ namespace rpc_service {
 
 class connection;
 
-class router : asio::noncopyable {
+class router {
+
+private:
+    router() = default;
+
 public:
+    router(const router&) = delete;
+    router(router&&) = delete;
+
     static router& instance() {
         static router instance;
         return instance;
@@ -89,10 +96,6 @@ public:
     // ==================== HANDLE ====================
 
 private:
-    router() = default;
-    router(const router&) = delete;
-    router(router&&) = delete;
-
     /**
      * call的helper
      * @tparam F

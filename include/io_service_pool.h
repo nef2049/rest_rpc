@@ -1,5 +1,5 @@
-#ifndef REST_RPC_IO_SERVICE_POOL_H_
-#define REST_RPC_IO_SERVICE_POOL_H_
+#ifndef REST_RPC_IO_SERVICE_POOL_H
+#define REST_RPC_IO_SERVICE_POOL_H
 
 #include <memory>
 #include <vector>
@@ -19,7 +19,7 @@ public:
             std::shared_ptr<boost::asio::io_service> io_service(new boost::asio::io_service);
             std::shared_ptr<boost::asio::io_service::work> work(new boost::asio::io_service::work(*io_service));
             io_services_.push_back(io_service);
-            work_.push_back(work);
+            works_.push_back(work);
         }
     }
 
@@ -52,16 +52,16 @@ public:
     }
 
 private:
-    /// The pool of io_services.
+    /// The pool of io_services
     std::vector<std::shared_ptr<boost::asio::io_service>> io_services_;
 
-    /// The work that keeps the io_services running.
-    std::vector<std::shared_ptr<boost::asio::io_service::work>> work_;
+    /// The work that keeps the io_services running
+    std::vector<std::shared_ptr<boost::asio::io_service::work>> works_;
 
-    /// The next io_service to use for a connection.
+    /// The next io_service to use for a connection
     std::size_t next_io_service_;
 };
 }  // namespace rpc_service
 }  // namespace rest_rpc
 
-#endif  // REST_RPC_IO_SERVICE_POOL_H_
+#endif  // REST_RPC_IO_SERVICE_POOL_H

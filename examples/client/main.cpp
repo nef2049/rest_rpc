@@ -382,37 +382,36 @@ void test_sub1() {
         return;
     }
 
-    client.subscribe("key", [](string_view data) {
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    client.subscribe("key1", [](string_view data) {
         std::cout << data << "\n";
     });
-
-    client.subscribe("key", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](string_view data) {
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    client.subscribe("key2", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](string_view data) {
         msgpack_codec codec;
         person p = codec.unpack<person>(data.data(), data.size());
         std::cout << p.name << "\n";
     });
-
-    client.subscribe("key1", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](string_view data) {
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    client.subscribe("key3", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](string_view data) {
         std::cout << data << "\n";
     });
 
     bool stop = false;
     std::thread thd1([&client, &stop] {
-        while (true) {
-            try {
-                if (client.has_connected()) {
-                    std::cout<<"prepare..."<<std::endl;
-                    std::this_thread::sleep_for(std::chrono::seconds(5));
-                    int r = client.call<int>("add", 2, 3);
-                    std::cout << "add result: " << r << "\n";
-                }
-
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            } catch (const std::exception& ex) {
-                std::cout << ex.what() << "\n";
+        try {
+            if (client.has_connected()) {
+                std::cout << "prepare..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                int r = client.call<int>("add", 9332, 76810);
+                std::cout << "add result: " << r << "\n";
             }
-            std::this_thread::sleep_for(std::chrono::seconds(5));
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        } catch (const std::exception& ex) {
+            std::cout << ex.what() << "\n";
         }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     });
 
     /*rpc_client client1;
@@ -440,6 +439,8 @@ void test_sub1() {
 
     std::string str;
     std::cin >> str;
+
+    thd1.join();
 }
 
 void test_multiple_thread() {

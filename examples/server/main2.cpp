@@ -104,7 +104,6 @@ void test_ssl() {
 
 int main() {
 
-
     rpc_server server(9000, std::thread::hardware_concurrency());
 
     dummy d;
