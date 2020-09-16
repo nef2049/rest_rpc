@@ -6,12 +6,12 @@ It's so easy to love RPC
 
 client1 subscribe
 ```text
-client1.subscribe("key2", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](...){});
+client1.subscribe("key", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](...){});
 ```
 
 client2 subscribe same or different key-token 
 ```text
-client1.subscribe("key2", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](...){});
+client2.subscribe("key", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", [](...){});
 ```
 
 server
@@ -32,6 +32,9 @@ client call
 ```text
 当clientX call<>("publish_by_token", key, token, data)时候
 server会调用publish_by_token对应的回调函数，也就是所有subscribe key-token的clients都会收到data这个数据
+
+比如clientX call<>("publish_by_token", "key", "048a796c8a3c6a6b7bd1223bf2c8cee05232e927b521984ba417cb2fca6df9d1", data);
+那么client1和client2都会收到clientX发来的数据data
 ```
 
 ## Others

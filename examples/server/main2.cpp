@@ -8,12 +8,12 @@ using namespace rest_rpc;
 using namespace rpc_service;
 
 struct dummy {
-    int add(rpc_conn conn, int a, int b) {
+    int add(std::weak_ptr<connection> conn, int a, int b) {
         return a + b;
     }
 };
 
-std::string translate(rpc_conn conn, const std::string& orignal) {
+std::string translate(std::weak_ptr<connection> conn, const std::string& orignal) {
     std::string temp = orignal;
     for (auto& c : temp) {
         c = std::toupper(c);
@@ -21,7 +21,7 @@ std::string translate(rpc_conn conn, const std::string& orignal) {
     return temp;
 }
 
-void hello(rpc_conn conn, const std::string& str) {
+void hello(std::weak_ptr<connection> conn, const std::string& str) {
     std::cout << "hello " << str << std::endl;
 }
 
@@ -33,21 +33,21 @@ struct person {
     MSGPACK_DEFINE(id, name, age);
 };
 
-std::string get_person_name(rpc_conn conn, const person& p) {
+std::string get_person_name(std::weak_ptr<connection> conn, const person& p) {
     return p.name;
 }
 
-person get_person(rpc_conn conn) {
+person get_person(std::weak_ptr<connection> conn) {
     return {1, "tom", 20};
 }
 
-void upload(rpc_conn conn, const std::string& filename, const std::string& content) {
+void upload(std::weak_ptr<connection> conn, const std::string& filename, const std::string& content) {
     std::cout << content.size() << std::endl;
     std::ofstream file(filename, std::ios::binary);
     file.write(content.data(), content.size());
 }
 
-std::string download(rpc_conn conn, const std::string& filename) {
+std::string download(std::weak_ptr<connection> conn, const std::string& filename) {
     std::ifstream file(filename, std::ios::binary);
     if (!file) {
         return "";
@@ -66,13 +66,13 @@ std::string download(rpc_conn conn, const std::string& filename) {
 
 qps g_qps;
 
-std::string get_name(rpc_conn conn, const person& p) {
+std::string get_name(std::weak_ptr<connection> conn, const person& p) {
     g_qps.increase();
     return p.name;
 }
 
 // if you want to response later, you can use async model, you can control when to response
-void async_echo(rpc_conn conn, const std::string& src) {
+void async_echo(std::weak_ptr<connection> conn, const std::string& src) {
     auto req_id =
         conn.lock()
             ->request_id();  // note: you need keep the request id at that time, and pass it into the async thread
@@ -87,11 +87,11 @@ void async_echo(rpc_conn conn, const std::string& src) {
     thd.detach();
 }
 
-std::string echo(rpc_conn conn, const std::string& src) {
+std::string echo(std::weak_ptr<connection> conn, const std::string& src) {
     return src;
 }
 
-int get_int(rpc_conn conn, int val) {
+int get_int(std::weak_ptr<connection> conn, int val) {
     return val;
 }
 
@@ -115,18 +115,20 @@ int main() {
     server.register_handler("upload", upload);
     server.register_handler("download", download);
     server.register_handler("get_name", get_name);
-    server.register_handler<Async>("async_echo", async_echo);
+    server.register_handler<ExecMode::async>("async_echo", async_echo);
     server.register_handler("echo", echo);
     server.register_handler("get_int", get_int);
 
     server.register_handler(
-        "publish_by_token", [&server](rpc_conn conn, std::string key, std::string token, std::string val) {
+        "publish_by_token",
+        [&server](std::weak_ptr<connection> conn, std::string key, std::string token, std::string val) {
             server.publish_by_token(std::move(key), std::move(token), std::move(val));
         });
 
-    server.register_handler("publish", [&server](rpc_conn conn, std::string key, std::string token, std::string val) {
-        server.publish(std::move(key), std::move(val));
-    });
+    server.register_handler(
+        "publish", [&server](std::weak_ptr<connection> conn, std::string key, std::string token, std::string val) {
+            server.publish(std::move(key), std::move(val));
+        });
 
     std::thread thd([&server] {
         person p{1, "tom", 20};
